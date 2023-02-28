@@ -65,12 +65,68 @@ const std::array<const char *, 12> keyNote = {"C", "C#", "D", "D#", "E", "F", "F
 
 volatile uint32_t currentStepSize;
 volatile uint8_t keyArray[7];
-volatile uint32_t knob_rotation;
+volatile int8_t knob_rotation;
 
 SemaphoreHandle_t keyArrayMutex;
 
 // Display driver object
 U8G2_SSD1305_128X32_NONAME_F_HW_I2C u8g2(U8G2_R0);
+
+class Knob {
+  private:
+    int8_t m_max_val; 
+    int8_t m_min_val; 
+    int8_t m_knobRotation;
+    uint8_t localKnob3_previous;
+    int rotation_variable;
+
+  public:
+    Knob(int8_t max_val, int8_t min_val) : m_knobRotation(knob_rotation), localKnob3_previous(0), rotation_variable(0) 
+    {
+      m_max_val = max_val; 
+      m_min_val = min_val; 
+    }
+  
+    void update(uint8_t localKnob3_current) {
+      uint8_t rotation = localKnob3_previous << 2 | localKnob3_current;
+      
+      switch(rotation) {
+        case 0x1:
+          rotation_variable = 1;
+          break;
+        case 0x4:
+          rotation_variable = -1;
+          break;
+        case 0xB:
+          rotation_variable = -1;
+          break;
+        case 0xE:
+          rotation_variable = 1;
+          break;
+        default:
+          rotation_variable = 0;
+      }
+      
+      m_knobRotation += rotation_variable;
+      
+      if(m_knobRotation > m_max_val) {
+        m_knobRotation = m_max_val;
+      }
+      else if(m_knobRotation < m_min_val) {
+        m_knobRotation = m_min_val;
+      }
+      
+      localKnob3_previous = localKnob3_current;
+      
+      __atomic_store_n(&knob_rotation, m_knobRotation, __ATOMIC_RELAXED);
+    }
+    
+    uint8_t getRotation() {
+      return m_knobRotation;
+    }
+};
+
+Knob knob3(8,0);
 
 // Function to set outputs using key matrix
 void setOutMuxBit(const uint8_t bitIdx, const bool value)
@@ -133,6 +189,7 @@ void sampleISR()
   static uint32_t phaseAcc = 0;
   phaseAcc += currentStepSize;
   int32_t Vout = (phaseAcc >> 24) - 128;
+  Vout = Vout >> (8 - knob_rotation);
   analogWrite(OUTR_PIN, Vout + 128);
 }
 
@@ -154,8 +211,9 @@ void scanKeysTask(void *pvParameters)
       keyArray[i] = readCols(i); // reading the 4 collum of row i
       xSemaphoreGive(keyArrayMutex);
     }
-    uint8_t localKnob3_current = keyArray[3]; 
-    localKnob3 = localKnob3_current;
+    uint8_t localKnob3_current = keyArray[3]&0x3;
+    knob3.update(localKnob3_current);
+
     uint32_t keys = keyArray[2]<<8 | keyArray[1]<<4 | keyArray[0];
     uint32_t localCurrentStepSize=mapStepsize(keys);
     __atomic_store_n(&currentStepSize, localCurrentStepSize, __ATOMIC_RELAXED);
@@ -164,7 +222,7 @@ void scanKeysTask(void *pvParameters)
 
 void displayUpdateTask(void *pvParameters)
 {
-  const TickType_t xFrequency = 20 / portTICK_PERIOD_MS;
+  const TickType_t xFrequency = 100 / portTICK_PERIOD_MS;
   TickType_t xLastWakeTime = xTaskGetTickCount();
   vTaskDelayUntil(&xLastWakeTime, xFrequency);
 
@@ -172,45 +230,16 @@ void displayUpdateTask(void *pvParameters)
 
   while (1)
   {
-    // Update display
-    u8g2.clearBuffer();                   // clear the internal memory
-    u8g2.setFont(u8g2_font_ncenB08_tr);   // choose a suitable font
-    u8g2.drawStr(2, 10, "Helllo World!"); // write something to the internal memory
-    u8g2.setCursor(2, 20);
-    for (int i = 0; i < 4; i++)
-    {                            // depending on the number of row(not collumn) i need to be change
-      xSemaphoreTake(keyArrayMutex, portMAX_DELAY);
-      keyArray[i] = readCols(i); // reading the 4 collum of row i
-      xSemaphoreGive(keyArrayMutex);
-    }
-    uint8_t localKnob3_current = keyArray[3]&0x3; 
-    uint8_t rotation = localKnob3<<2 | localKnob3_current;
-    static int rotation_variable;
-    switch(rotation){
-      case 0x1:
-        rotation_variable = 1;
-        break;
-      case 0x4:
-        rotation_variable = -1;
-        break;
-      case 0xB:
-        rotation_variable = -1;
-        break;
-      case 0xE:
-        rotation_variable = 1;
-        break;
-      default:
-        rotation_variable = 0;
-    }
-    knob_rotation += rotation_variable;
-    localKnob3 = localKnob3_current;
+    xSemaphoreTake(keyArrayMutex, portMAX_DELAY);
     uint32_t keys = keyArray[2]<<8 | keyArray[1]<<4 | keyArray[0];
-    const char* k=mapKeys(keys);
-    u8g2.setCursor(2, 30);
-    u8g2.print(knob_rotation,HEX);
-    //u8g2.drawStr(2,30,k);
-    u8g2.sendBuffer(); // transfer internal memory to the display
-    // Toggle LED
+    xSemaphoreGive(keyArrayMutex);
+    u8g2.clearBuffer();         // clear the internal memory
+    u8g2.setFont(u8g2_font_ncenB08_tr); // choose a suitable font
+    u8g2.drawStr(2,10,"Helllo World!");  // write something to the internal memory
+    u8g2.setCursor(2,20);
+    u8g2.print(knob3.getRotation(),HEX);
+    u8g2.sendBuffer();          // transfer internal memory to the display
+
     digitalToggle(LED_BUILTIN);
   }
 }
@@ -257,14 +286,14 @@ void setup()
 
   // multithreading
   // multithreading for scankey
-  // TaskHandle_t scanKeysHandle = NULL;
-  // xTaskCreate(
-  //     scanKeysTask,     /* Function that implements the task */
-  //     "scanKeys",       /* Text name for the task */
-  //     64,               /* Stack size in words, not bytes */
-  //     NULL,             /* Parameter passed into the task */
-  //     2,                /* Task priority */
-  //     &scanKeysHandle); /* Pointer to store the task handle */
+  TaskHandle_t scanKeysHandle = NULL;
+  xTaskCreate(
+      scanKeysTask,     /* Function that implements the task */
+      "scanKeys",       /* Text name for the task */
+      64,               /* Stack size in words, not bytes */
+      NULL,             /* Parameter passed into the task */
+      2,                /* Task priority */
+      &scanKeysHandle); /* Pointer to store the task handle */
 
   // multithreading for display task
   TaskHandle_t displayUpdateHandle = NULL;
@@ -275,9 +304,7 @@ void setup()
       NULL,                  /* Parameter passed into the task */
       1,                     /* Task priority */
       &displayUpdateHandle); /* Pointer to store the task handle */
-  vTaskStartScheduler();
-
   
-
+  vTaskStartScheduler();
 }
 void loop() {}
