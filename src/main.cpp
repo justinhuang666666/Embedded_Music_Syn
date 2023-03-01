@@ -34,6 +34,8 @@ const int HKOW_BIT = 5;
 const int HKOE_BIT = 6;
 // generating sound
 
+const uint8_t Octave = 4;
+
 const uint32_t sampleRate = 22000;
 const double semitoneFactor = std::pow(2, 1.0 / 12);
 
@@ -43,6 +45,7 @@ constexpr std::array<uint32_t, 12> calc_stepSizes()
 
   double frequencies[12] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
   frequencies[9] = 440.0; // A4
+  //880 A5
 
   for (int i = 10; i < 12; i++)
   {
@@ -68,6 +71,8 @@ volatile uint8_t keyArray[7];
 volatile int8_t knob_rotation;
 
 SemaphoreHandle_t keyArrayMutex;
+
+volatile uint8_t TX_Message[8] = {0};
 
 // Display driver object
 U8G2_SSD1305_128X32_NONAME_F_HW_I2C u8g2(U8G2_R0);
@@ -174,6 +179,19 @@ const char *mapKeys(uint32_t keys)
   return localkeyNote;
 }
 
+uint8_t mapNoteNum(uint32_t keys)
+{
+  uint8_t localNoteNum = 0;
+  for (int i = 0; i < 12; i++)
+  {
+    if((keys & (0x1 << i)) == 0){
+      localNoteNum = i;
+      break;
+    }
+  }
+  return localNoteNum;
+}
+
 uint32_t mapStepsize(uint32_t keys)
 {
   uint32_t localStepSize = 0;
@@ -200,7 +218,7 @@ void scanKeysTask(void *pvParameters)
   TickType_t xLastWakeTime = xTaskGetTickCount();
   vTaskDelayUntil( &xLastWakeTime, xFrequency );
 
-  static uint32_t localKnob3;
+  static uint32_t keys_previous;
 
   while (1)
   {
@@ -214,9 +232,38 @@ void scanKeysTask(void *pvParameters)
     uint8_t localKnob3_current = keyArray[3]&0x3;
     knob3.update(localKnob3_current);
 
-    uint32_t keys = keyArray[2]<<8 | keyArray[1]<<4 | keyArray[0];
-    uint32_t localCurrentStepSize=mapStepsize(keys);
-    __atomic_store_n(&currentStepSize, localCurrentStepSize, __ATOMIC_RELAXED);
+    uint32_t keys_current = keyArray[2]<<8 | keyArray[1]<<4 | keyArray[0];
+    // uint32_t localCurrentStepSize=mapStepsize(keys_current);
+    // __atomic_store_n(&currentStepSize, localCurrentStepSize, __ATOMIC_RELAXED);
+
+    // if((keys_previous != 0) & (keys_current == 0)){
+    //   TX_Message[0] = 'R';
+    //   TX_Message[1] = Octave;
+    //   TX_Message[2] = mapNoteNum(keys_previous);
+    // }
+    // else if((keys_previous == 0) & (keys_current != 0)){
+    //   TX_Message[0] = 'P';
+    //   TX_Message[1] = Octave;
+    //   TX_Message[2] = mapNoteNum(keys_current);
+    // }
+    // else if(keys_previous != keys_current){
+    //   TX_Message[0] = 'P';
+    //   TX_Message[1] = Octave;
+    //   TX_Message[2] = mapNoteNum(keys_current);
+    // }
+
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_ncenB08_tr);
+    // u8g2.setCursor(2,10);
+    // u8g2.print((char) TX_Message[0]);
+    // u8g2.setCursor(2,20);
+    // u8g2.print(TX_Message[1]);
+    u8g2.setCursor(2,30);
+    u8g2.print(keys_current,HEX);
+    u8g2.sendBuffer();
+
+    // keys_previous = keys_current;
+    
   }
 }
 
@@ -296,14 +343,14 @@ void setup()
       &scanKeysHandle); /* Pointer to store the task handle */
 
   // multithreading for display task
-  TaskHandle_t displayUpdateHandle = NULL;
-  xTaskCreate(
-      displayUpdateTask,     /* Function that implements the task */
-      "displayupdate",       /* Text name for the task */
-      256,                   /* Stack size in words, not bytes */
-      NULL,                  /* Parameter passed into the task */
-      1,                     /* Task priority */
-      &displayUpdateHandle); /* Pointer to store the task handle */
+  // TaskHandle_t displayUpdateHandle = NULL;
+  // xTaskCreate(
+  //     displayUpdateTask,     /* Function that implements the task */
+  //     "displayupdate",       /* Text name for the task */
+  //     256,                   /* Stack size in words, not bytes */
+  //     NULL,                  /* Parameter passed into the task */
+  //     1,                     /* Task priority */
+  //     &displayUpdateHandle); /* Pointer to store the task handle */
   
   vTaskStartScheduler();
 }
