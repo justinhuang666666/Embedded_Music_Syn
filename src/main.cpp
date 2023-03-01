@@ -198,12 +198,13 @@ void scanKeysTask(void *pvParameters)
 
   const TickType_t xFrequency = 20 / portTICK_PERIOD_MS;
   TickType_t xLastWakeTime = xTaskGetTickCount();
-  vTaskDelayUntil( &xLastWakeTime, xFrequency );
+  
 
   static uint32_t localKnob3;
 
   while (1)
   {
+    vTaskDelayUntil( &xLastWakeTime, xFrequency );
     // reading input
     for (int i = 0; i < 4; i++)
     {                            // depending on the number of row(not collumn) i need to be change
@@ -224,12 +225,13 @@ void displayUpdateTask(void *pvParameters)
 {
   const TickType_t xFrequency = 100 / portTICK_PERIOD_MS;
   TickType_t xLastWakeTime = xTaskGetTickCount();
-  vTaskDelayUntil(&xLastWakeTime, xFrequency);
-
+  
   static uint32_t localKnob3;
 
   while (1)
   {
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+
     xSemaphoreTake(keyArrayMutex, portMAX_DELAY);
     uint32_t keys = keyArray[2]<<8 | keyArray[1]<<4 | keyArray[0];
     xSemaphoreGive(keyArrayMutex);
